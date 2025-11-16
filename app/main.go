@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strings"
 )
 
 // Ensures gofmt doesn't remove the "net" import in stage 1 (feel free to remove this!)
@@ -25,42 +26,86 @@ type DNSHeader struct {
 	ARCOUNT uint16
 }
 
-func (m *DNSHeader) Encode() []byte {
+type DNSQuestion struct {
+	NAME  string
+	TYPE  uint16
+	CLASS uint16
+}
+
+type DNSResponse struct {
+	HEADER   DNSHeader
+	QUESTION DNSQuestion
+}
+
+func (h *DNSHeader) EncodeHeader() []byte {
 	// Allocating 12 bytes for the header
 	header := make([]byte, 12)
 
 	// Writing ID , bytes 0-1
-	binary.BigEndian.PutUint16(header[0:2], m.ID)
+	binary.BigEndian.PutUint16(header[0:2], h.ID)
 
 	// Writing Flags, bytes 2-3
 	// Byte 2: QR(1) | OPCODE(4) | AA(1) | TC(1) | RD(1)
 	// Byte 3: RA(1) | Z(3) | RCODE(4)
 	flags := uint16(0)
-	flags |= uint16(m.QR&1) << 15
-	flags |= uint16(m.OPCODE&0x0F) << 11
-	flags |= uint16(m.AA&1) << 10
-	flags |= uint16(m.TC&1) << 9
-	flags |= uint16(m.RD&1) << 8
-	flags |= uint16(m.RA&1) << 7
-	flags |= uint16(m.Z&0x07) << 4
-	flags |= uint16(m.RCODE & 0x0F)
+	flags |= uint16(h.QR&1) << 15
+	flags |= uint16(h.OPCODE&0x0F) << 11
+	flags |= uint16(h.AA&1) << 10
+	flags |= uint16(h.TC&1) << 9
+	flags |= uint16(h.RD&1) << 8
+	flags |= uint16(h.RA&1) << 7
+	flags |= uint16(h.Z&0x07) << 4
+	flags |= uint16(h.RCODE & 0x0F)
 
 	// Inserting flags into header
 	binary.BigEndian.PutUint16(header[2:4], flags)
 
 	// Writing QDCOUNT, bytes 4-5
-	binary.BigEndian.PutUint16((header[4:6]), m.QDCOUNT)
+	binary.BigEndian.PutUint16((header[4:6]), h.QDCOUNT)
 
 	// Writing ANCOUNT, bytes 6-7
-	binary.BigEndian.PutUint16(header[6:8], m.ANCOUNT)
+	binary.BigEndian.PutUint16(header[6:8], h.ANCOUNT)
 
 	// Writing NSCOUNT, bytes 8-9
-	binary.BigEndian.PutUint16(header[8:10], m.NSCOUNT)
+	binary.BigEndian.PutUint16(header[8:10], h.NSCOUNT)
 
 	// Writing ARCOUNT, bytes 10-11
-	binary.BigEndian.PutUint16(header[10:12], m.ARCOUNT)
+	binary.BigEndian.PutUint16(header[10:12], h.ARCOUNT)
 
 	return header
+}
+
+func (q *DNSQuestion) EncodeQuestion() []byte {
+	question := []byte{} // 4 extra bytes for TYPE and CLASS
+
+	// Encoding NAME
+	labels := strings.Split(q.NAME, ".")
+	fmt.Println(labels)
+
+	for _, label := range labels {
+		fmt.Println(label)
+		question = append(question, byte(len(label)))
+		question = append(question, []byte(label)...)
+	}
+	// Appending the null byte to terminate the NAME
+	question = append(question, 0x00)
+
+	// Encoding TYPE
+	{
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, q.TYPE)
+		question = append(question, buf...)
+	}
+
+	// Encoding CLASS
+	{
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, q.CLASS)
+		question = append(question, buf...)
+	}
+
+	return question
+
 }
 
 func main() {
@@ -101,7 +146,7 @@ func main() {
 		}
 
 		// Creating respone header
-		response := DNSHeader{
+		header := DNSHeader{
 			ID:      requestID,
 			QR:      1, // Response
 			OPCODE:  0, // Standard query
@@ -111,13 +156,22 @@ func main() {
 			RA:      0, // Recursion not available
 			Z:       0, // Reserved
 			RCODE:   0, // No error
-			QDCOUNT: 0, // No questions
+			QDCOUNT: 1, // No questions
 			ANCOUNT: 0, // No answers
 			NSCOUNT: 0, // No authority records
 			ARCOUNT: 0, // No additional records
 		}
 
-		responseBytes := response.Encode()
+		headerBytes := header.EncodeHeader()
+
+		quetion := DNSQuestion{
+			NAME:  "codecrafters.io",
+			TYPE:  1,
+			CLASS: 1,
+		}
+
+		questionBytes := quetion.EncodeQuestion()
+		responseBytes := append(headerBytes, questionBytes...)
 
 		_, err = udpConn.WriteToUDP(responseBytes, source)
 		if err != nil {
