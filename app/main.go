@@ -32,9 +32,19 @@ type DNSQuestion struct {
 	CLASS uint16
 }
 
+type DNSAnswer struct {
+	NAME   string
+	TYPE   uint16
+	CLASS  uint16
+	TTL    uint32
+	LENGTH uint16
+	DATA   string
+}
+
 type DNSResponse struct {
 	HEADER   DNSHeader
 	QUESTION DNSQuestion
+	ANSWER   DNSAnswer
 }
 
 func (h *DNSHeader) EncodeHeader() []byte {
@@ -105,7 +115,63 @@ func (q *DNSQuestion) EncodeQuestion() []byte {
 	}
 
 	return question
+}
 
+func (a *DNSAnswer) EncodeAnswer() []byte {
+	answer := []byte{}
+
+	labels := strings.Split(a.NAME, ".")
+
+	for _, label := range labels {
+		answer = append(answer, byte(len(label)))
+		answer = append(answer, []byte(label)...)
+	}
+	// Null byte to terminate NAME
+	answer = append(answer, 0x00)
+
+	// Encoding TYPE
+	{
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, a.TYPE)
+		answer = append(answer, buf...)
+	}
+
+	// Encoding CLASS
+	{
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, a.CLASS)
+		answer = append(answer, buf...)
+	}
+
+	// Encoding TTL
+	{
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, a.TTL)
+		answer = append(answer, buf...)
+	}
+
+	// Encoding LENGTH
+	{
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, a.LENGTH)
+		answer = append(answer, buf...)
+	}
+
+	// Encoding DATA
+	{
+		buf := []byte{}
+
+		labels := strings.Split(a.DATA, ".")
+		for _, label := range labels {
+			buf = append(buf, byte(len(label)))
+			buf = append(buf, []byte(label)...)
+		}
+
+		buf = append(buf, 0x00) // Null byte to terminate DATA
+		answer = append(answer, buf...)
+	}
+
+	return answer
 }
 
 func main() {
@@ -156,22 +222,37 @@ func main() {
 			RA:      0, // Recursion not available
 			Z:       0, // Reserved
 			RCODE:   0, // No error
-			QDCOUNT: 1, // No questions
-			ANCOUNT: 0, // No answers
+			QDCOUNT: 1, // 1 question
+			ANCOUNT: 1, // 1 answer
 			NSCOUNT: 0, // No authority records
 			ARCOUNT: 0, // No additional records
 		}
 
 		headerBytes := header.EncodeHeader()
 
-		quetion := DNSQuestion{
+		// Creating question
+		question := DNSQuestion{
 			NAME:  "codecrafters.io",
 			TYPE:  1,
 			CLASS: 1,
 		}
 
-		questionBytes := quetion.EncodeQuestion()
+		questionBytes := question.EncodeQuestion()
+
+		// Creating answer
+		answer := DNSAnswer{
+			NAME:   "codecrafters.io",
+			TYPE:   1,
+			CLASS:  1,
+			TTL:    60,
+			LENGTH: 4,
+			DATA:   "8.8.8.8",
+		}
+
+		answerBytes := answer.EncodeAnswer()
+
 		responseBytes := append(headerBytes, questionBytes...)
+		responseBytes = append(responseBytes, answerBytes...)
 
 		_, err = udpConn.WriteToUDP(responseBytes, source)
 		if err != nil {
