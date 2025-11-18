@@ -90,10 +90,8 @@ func (q *DNSQuestion) EncodeQuestion() []byte {
 
 	// Encoding NAME
 	labels := strings.Split(q.NAME, ".")
-	fmt.Println(labels)
 
 	for _, label := range labels {
-		fmt.Println(label)
 		question = append(question, byte(len(label)))
 		question = append(question, []byte(label)...)
 	}
@@ -213,6 +211,41 @@ func ParseHeader(buf []byte, size int) (uint16, uint8, uint8, uint8, uint8, uint
 	return ID, QR, OPCODE, AA, TC, RD, RA, Z, RCODE, QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT
 }
 
+func parseQuestion(buf []byte, size int) (string, uint16, uint16) {
+	// Parsing NAME
+	var NAME string
+	var offset int = 12 // DNS header is 12 bytes
+
+	for {
+		length := int(buf[offset])
+		if length == 0 {
+			offset++
+			break
+		}
+		offset++
+		NAME += string(buf[offset:offset+length]) + "."
+		offset += length
+	}
+	NAME = strings.TrimSuffix(NAME, ".")
+
+	// Parsing TYPE
+	var TYPE uint16 = 1
+	// if offset+2 <= size {
+	// 	TYPE = binary.BigEndian.Uint16(buf[offset : offset+2])
+	// 	offset += 2
+	// }
+
+	// Parsing CLASS
+	var CLASS uint16 = 1
+	// if offset+2 <= size {
+	// 	CLASS = binary.BigEndian.Uint16(buf[offset : offset+2])
+	// 	offset += 2
+	// }
+
+	return NAME, TYPE, CLASS
+
+}
+
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 
@@ -246,6 +279,8 @@ func main() {
 
 		// Parsing request ID from the first 2 bytes
 		ID, QR, OPCODE, AA, TC, RD, RA, Z, RCODE, QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT := ParseHeader(buf, size)
+		NAME, TYPE, CLASS := parseQuestion(buf, size)
+		// NAME_A, TYPE_A, CLASS_A, TTL_A, LENGTH_A, DATA_A := parseAnswer(buf, size)
 
 		// Creating respone header
 		header := DNSHeader{
@@ -268,18 +303,18 @@ func main() {
 
 		// Creating question
 		question := DNSQuestion{
-			NAME:  "codecrafters.io",
-			TYPE:  1,
-			CLASS: 1,
+			NAME:  NAME,
+			TYPE:  TYPE,
+			CLASS: CLASS,
 		}
 
 		questionBytes := question.EncodeQuestion()
 
 		// Creating answer
 		answer := DNSAnswer{
-			NAME:   "codecrafters.io",
-			TYPE:   1,
-			CLASS:  1,
+			NAME:   NAME,
+			TYPE:   TYPE,
+			CLASS:  CLASS,
 			TTL:    60,
 			LENGTH: 4,
 			DATA:   "8.8.8.8",
