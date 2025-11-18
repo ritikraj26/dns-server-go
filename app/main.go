@@ -174,6 +174,45 @@ func (a *DNSAnswer) EncodeAnswer() []byte {
 	return answer
 }
 
+func ParseHeader(buf []byte, size int) (uint16, uint8, uint8, uint8, uint8, uint8, uint8, uint8, uint8, uint16, uint16, uint16, uint16) {
+	var ID uint16
+	if size >= 2 {
+		ID = binary.BigEndian.Uint16(buf[0:2])
+	}
+
+	var QR uint8 = 1
+
+	var OPCODE uint8
+	if size >= 4 {
+		OPCODE = buf[2] >> 3 & 0x0F
+	}
+
+	var AA uint8 = 0
+	var TC uint8 = 0
+
+	var RD uint8
+	if size >= 4 {
+		RD = buf[2] & 0x01
+	}
+
+	var RA uint8 = 0
+	var Z uint8 = 0
+
+	var RCODE uint8
+	if OPCODE == 0 {
+		RCODE = 0
+	} else {
+		RCODE = 4
+	}
+
+	var QDCOUNT uint16 = 1
+	var ANCOUNT uint16 = 1
+	var NSCOUNT uint16 = 0
+	var ARCOUNT uint16 = 0
+
+	return ID, QR, OPCODE, AA, TC, RD, RA, Z, RCODE, QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT
+}
+
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 
@@ -206,26 +245,23 @@ func main() {
 		fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
 
 		// Parsing request ID from the first 2 bytes
-		var requestID uint16
-		if size >= 2 {
-			requestID = binary.BigEndian.Uint16(buf[0:2])
-		}
+		ID, QR, OPCODE, AA, TC, RD, RA, Z, RCODE, QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT := ParseHeader(buf, size)
 
 		// Creating respone header
 		header := DNSHeader{
-			ID:      requestID,
-			QR:      1, // Response
-			OPCODE:  0, // Standard query
-			AA:      0, // Not authoritative
-			TC:      0, // Not truncated
-			RD:      0, // Recursion not desired
-			RA:      0, // Recursion not available
-			Z:       0, // Reserved
-			RCODE:   0, // No error
-			QDCOUNT: 1, // 1 question
-			ANCOUNT: 1, // 1 answer
-			NSCOUNT: 0, // No authority records
-			ARCOUNT: 0, // No additional records
+			ID:      ID,
+			QR:      QR,      // Response
+			OPCODE:  OPCODE,  // Standard query
+			AA:      AA,      // Not authoritative
+			TC:      TC,      // Not truncated
+			RD:      RD,      // Recursion not desired
+			RA:      RA,      // Recursion not available
+			Z:       Z,       // Reserved
+			RCODE:   RCODE,   // No error
+			QDCOUNT: QDCOUNT, // 1 question
+			ANCOUNT: ANCOUNT, // 1 answer
+			NSCOUNT: NSCOUNT, // No authority records
+			ARCOUNT: ARCOUNT, // No additional records
 		}
 
 		headerBytes := header.EncodeHeader()
