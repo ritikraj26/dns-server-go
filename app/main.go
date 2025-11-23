@@ -157,16 +157,23 @@ func (a *DNSAnswer) EncodeAnswer() []byte {
 
 	// Encoding DATA
 	{
-		buf := []byte{}
+		// buf := []byte{}
 
-		labels := strings.Split(a.DATA, ".")
-		for _, label := range labels {
-			buf = append(buf, byte(len(label)))
-			buf = append(buf, []byte(label)...)
+		// labels := strings.Split(a.DATA, ".")
+		// for _, label := range labels {
+		// 	buf = append(buf, byte(len(label)))
+		// 	buf = append(buf, []byte(label)...)
+		// }
+
+		// buf = append(buf, 0x00) // Null byte to terminate DATA
+		// answer = append(answer, buf...)
+
+		ipParts := strings.Split(a.DATA, ".")
+		for _, part := range ipParts {
+			var bytePart uint8
+			fmt.Sscanf(part, "%d", &bytePart)
+			answer = append(answer, byte(bytePart))
 		}
-
-		buf = append(buf, 0x00) // Null byte to terminate DATA
-		answer = append(answer, buf...)
 	}
 
 	return answer
@@ -179,6 +186,9 @@ func ParseHeader(buf []byte, size int) (uint16, uint8, uint8, uint8, uint8, uint
 	}
 
 	var QR uint8 = 1
+	// if size >= 4 {
+	// 	QR = buf[2] >> 7 & 0x01
+	// }
 
 	var OPCODE uint8
 	if size >= 4 {
@@ -186,50 +196,111 @@ func ParseHeader(buf []byte, size int) (uint16, uint8, uint8, uint8, uint8, uint
 	}
 
 	var AA uint8 = 0
-	var TC uint8 = 0
+	// if size >= 4 {
+	// 	AA = (buf[2] >> 2) & 0x01
+	// }
 
-	var RD uint8
+	var TC uint8 = 0
+	// if size >= 4 {
+	// 	TC = (buf[2] >> 1) & 0x01
+	// }
+
+	var RD uint8 = 0
 	if size >= 4 {
 		RD = buf[2] & 0x01
 	}
 
 	var RA uint8 = 0
-	var Z uint8 = 0
+	// if size >= 4 {
+	// 	RA = (buf[3] >> 7) & 0x01
+	// }
 
-	var RCODE uint8
-	if OPCODE == 0 {
-		RCODE = 0
-	} else {
-		RCODE = 4
+	var Z uint8 = 0
+	// if size >= 4 {
+	// 	Z = (buf[3] >> 4) & 0x07
+	// }
+
+	var RCODE uint8 = 4
+	// if OPCODE == 0 {
+	// 	RCODE = 0
+	// } else {
+	// 	RCODE = 4
+	// }
+	// if size >= 4 {
+	// 	RCODE = buf[3] & 0x0F
+	// }
+
+	var QDCOUNT uint16 = 0
+	if size >= 6 {
+		QDCOUNT = binary.BigEndian.Uint16(buf[4:6])
 	}
 
-	var QDCOUNT uint16 = 1
-	var ANCOUNT uint16 = 1
+	var ANCOUNT uint16 = QDCOUNT
+	// if size >= 8 {
+	// 	ANCOUNT = binary.BigEndian.Uint16(buf[6:8])
+	// }
+
 	var NSCOUNT uint16 = 0
+	if size >= 10 {
+		NSCOUNT = binary.BigEndian.Uint16(buf[8:10])
+	}
+
 	var ARCOUNT uint16 = 0
+	if size >= 12 {
+		ARCOUNT = binary.BigEndian.Uint16(buf[10:12])
+	}
 
 	return ID, QR, OPCODE, AA, TC, RD, RA, Z, RCODE, QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT
 }
 
-func parseQuestion(buf []byte, size int) (string, uint16, uint16) {
-	// Parsing NAME
-	var NAME string
-	var offset int = 12 // DNS header is 12 bytes
+// function to check if the current byte starts with the compression bits 11
+func isCompressed(buf []byte, offset int) bool {
+	bufbyte := buf[offset]
+	return bufbyte&0xC0 == 0xC0
+}
+
+func parseName(buf []byte, offset int) (string, int) {
+	var labels []string
+	originalOffset := offset
+	jumped := false
 
 	for {
 		length := int(buf[offset])
+
 		if length == 0 {
 			offset++
 			break
 		}
-		offset++
-		NAME += string(buf[offset:offset+length]) + "."
-		offset += length
+
+		if isCompressed(buf, offset) {
+			if !jumped {
+				originalOffset = offset + 2
+			}
+			pointer := int(binary.BigEndian.Uint16(buf[offset:offset+2]) & 0x3FFF)
+			offset = pointer
+			jumped = true
+			continue
+		} else {
+			offset++
+			labels = append(labels, string(buf[offset:offset+length]))
+			offset += length
+		}
 	}
-	NAME = strings.TrimSuffix(NAME, ".")
+
+	name := strings.Join(labels, ".")
+	if jumped {
+		return name, originalOffset
+	}
+	return name, offset
+}
+
+func parseQuestion(buf []byte, offset int) (DNSQuestion, int) {
+	// Parsing NAME
+	NAME, offset := parseName(buf, offset)
 
 	// Parsing TYPE
 	var TYPE uint16 = 1
+	offset += 2
 	// if offset+2 <= size {
 	// 	TYPE = binary.BigEndian.Uint16(buf[offset : offset+2])
 	// 	offset += 2
@@ -237,13 +308,17 @@ func parseQuestion(buf []byte, size int) (string, uint16, uint16) {
 
 	// Parsing CLASS
 	var CLASS uint16 = 1
+	offset += 2
 	// if offset+2 <= size {
 	// 	CLASS = binary.BigEndian.Uint16(buf[offset : offset+2])
 	// 	offset += 2
 	// }
 
-	return NAME, TYPE, CLASS
-
+	return DNSQuestion{
+		NAME:  NAME,
+		TYPE:  TYPE,
+		CLASS: CLASS,
+	}, offset
 }
 
 func main() {
@@ -279,8 +354,6 @@ func main() {
 
 		// Parsing request ID from the first 2 bytes
 		ID, QR, OPCODE, AA, TC, RD, RA, Z, RCODE, QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT := ParseHeader(buf, size)
-		NAME, TYPE, CLASS := parseQuestion(buf, size)
-		// NAME_A, TYPE_A, CLASS_A, TTL_A, LENGTH_A, DATA_A := parseAnswer(buf, size)
 
 		// Creating respone header
 		header := DNSHeader{
@@ -298,29 +371,37 @@ func main() {
 			NSCOUNT: NSCOUNT, // No authority records
 			ARCOUNT: ARCOUNT, // No additional records
 		}
-
 		headerBytes := header.EncodeHeader()
 
 		// Creating question
-		question := DNSQuestion{
-			NAME:  NAME,
-			TYPE:  TYPE,
-			CLASS: CLASS,
+		offset := 12
+		var questions []DNSQuestion
+		for i := 0; i < int(QDCOUNT); i++ {
+			var question DNSQuestion
+			question, offset = parseQuestion(buf, offset)
+			questions = append(questions, question)
 		}
-
-		questionBytes := question.EncodeQuestion()
+		var questionBytes []byte
+		for i := 0; i < int(QDCOUNT); i++ {
+			questionBytes = append(questionBytes, questions[i].EncodeQuestion()...)
+		}
 
 		// Creating answer
-		answer := DNSAnswer{
-			NAME:   NAME,
-			TYPE:   TYPE,
-			CLASS:  CLASS,
-			TTL:    60,
-			LENGTH: 4,
-			DATA:   "8.8.8.8",
+		var answers []DNSAnswer
+		for i := 0; i < int(QDCOUNT); i++ {
+			answers = append(answers, DNSAnswer{
+				NAME:   questions[i].NAME,
+				TYPE:   questions[i].TYPE,
+				CLASS:  questions[i].CLASS,
+				TTL:    60,
+				LENGTH: 4,
+				DATA:   "8.8.8.8",
+			})
 		}
-
-		answerBytes := answer.EncodeAnswer()
+		var answerBytes []byte
+		for i := 0; i < int(QDCOUNT); i++ {
+			answerBytes = append(answerBytes, answers[i].EncodeAnswer()...)
+		}
 
 		responseBytes := append(headerBytes, questionBytes...)
 		responseBytes = append(responseBytes, answerBytes...)
